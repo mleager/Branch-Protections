@@ -1,0 +1,57 @@
+name: Setup Repository Environments
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-environments:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Development Environment
+        run: |
+          curl -L -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/environments/development \
+            -d '{
+              "wait_timer": 0,
+              "reviewers": [],
+              "deployment_branch_policy": {
+                "protected_branches": true,
+                "custom_branch_policies": false
+              }
+            }'
+
+      - name: Create Staging Environment
+        run: |
+          curl -L -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/environments/staging \
+            -d '{
+              "wait_timer": 0,
+              "reviewers": [],
+              "deployment_branch_policy": {
+                "protected_branches": true,
+                "custom_branch_policies": false
+              }
+            }'
+
+      - name: Create Production Environment
+        run: |
+          curl -L -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/environments/production \
+            -d '{
+              "wait_timer": 300,
+              "reviewers": [{"type": "User", "id": ${{ github.actor_id }}}],
+              "deployment_branch_policy": {
+                "protected_branches": true,
+                "custom_branch_policies": false
+              }
+            }'
+
