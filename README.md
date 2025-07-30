@@ -1,12 +1,40 @@
-# Branch Protections
+# Cohesive setup of Branches, Environments, etc.
 
-Branch protections will vary depending by branch or branch strategy employed by a repo.
+To help keep your repo secure, you can use environments and branches together to organize your environment
+
+Branches are were your code is stored and organized
+
+Environments are where the code is deployed
+
+Branches are secured using Branch Protections and Rulesets
+
+Environments are secured using Deployment Policies
+
+
+**Short-Lived vs Long-Lived Branches**
+
+Long-lived branches include: main, develop, release, staging, etc.
+
+Short-lived branches include: feature/\*, bugfix/\*, hotfix/\*, etc.
+
+**How it Works Together**
+
+Environments --> Long-lived Branches  
+Environments --> Deployment Policies  
+Long-lived Branches --> Branch Protections  
+Short-lived Branches --> Rulesets  
+
+
+## Basics
+
+Branch protections will vary by the branch or branch strategy employed by a repo.
 
 A 'development' branch can have less restrictions that 'main' or 'release'.
 
-It's recommended to use pre-defined naming conventions for branch names.
+It's recommended to follow common naming conventions for branch names.
 
-Example branch names:
+
+Common branch names:
 
 - feature/*
 - bugfix/*
@@ -14,50 +42,56 @@ Example branch names:
 - release/*
 
 
-This repo uses Github Action Workflows to setup basics environments and branch protections.
+This repo uses Github Action Workflows to setup: 
+
+- environments 
+- branches
+- branch protections
+- deployment policies
 
 It uses the Github API to create everything.
 
-Github API Docs:
+**Github API Docs:**
 
-[Branch Protections](https://docs.github.com/en/rest/branches/branch-protection?apiVersion=2022-11-28#update-branch-protection)
+- [Branch Protections](https://docs.github.com/en/rest/branches/branch-protection?apiVersion=2022-11-28#update-branch-protection)
 
-[Environments](https://docs.github.com/en/rest/deployments/environments?apiVersion=2022-11-28#create-or-update-an-environment)
+- [Environments](https://docs.github.com/en/rest/deployments/environments?apiVersion=2022-11-28#create-or-update-an-environment)
 
 
-Environments:
+**Environments:**
 
 - development
 - staging (optional)
 - production
 
 
-Example Branch Protections:
+**Example Branch Protections:**
 
-- develop*
+develop*
 
-    require approval before merge
-    restrict deletions
-    restrict force pushes
-
-
-- feature*
-
-    require approval
-
-- main
-
-    read-only
+- require approval before merge  
+- restrict deletions  
+- restrict force pushes  
 
 
--------------------------------------------------------------------------------
+feature*
+
+- develop branch protections  
+- require approval from 1 reviewer
+
+main
+
+- require approval from 2 reviewers  
+- require linear history  
+- read-only
+
 
 
 ## Branch Protections
 
 Branch Protections are used to define what can be done on a branch and by who
 
-Example branch protection:
+**Example branch protections:**
 
 - Define a Branch Naming Pattern (main, feature/*, etc.)
 
@@ -75,8 +109,6 @@ Example branch protection:
 - Allow Deletions                                   (off by default)
 
 
--------------------------------------------------------------------------------
-
 
 ## Environments
 
@@ -87,8 +119,7 @@ Environments can have:
 - Environment Secrets and Variables
 
 
-Deployment Protection Rules:
-----------------------------
+**Deployment Protection Rules:**
 
 This is defined when creating an environment
 
@@ -100,8 +131,7 @@ Can specify:
 - Wait Timer - Set an amount of time to wait before allowing deployments to proceed
 
 
-Deployment Branches and Tags
-----------------------------
+**Deployment Branches and Tags**
 
 Limit which branches and tags can deploy to this environment based on rules or naming patterns.
 
@@ -110,4 +140,14 @@ Can specify:
 - No restriction            (anyone can deploy to the environment)
 - Protected Branches only   (all Protected Branches can deploy)
 - Select Branches and Tags  (specify a naming pattern to allow)
+
+
+
+## Rulesets
+
+Can be created to enforce rules on branches that may not exist yet
+
+Ideal for short-lived branches like feature, bugfix, etc.
+
+Has basically the same options as branch protections
 
