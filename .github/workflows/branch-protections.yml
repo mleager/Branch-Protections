@@ -2,71 +2,265 @@ name: Setup Branch Protections
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Setup Repository Environments"]
+    types:
+      - completed
+    branches:
+      - main
 
 jobs:
+  # Make sure the Setup Repository Environments workflow succeeded
+  check-workflow-success:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check if Setup Repository Environments workflow succeeded
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+            echo "Running via manual dispatch"
+          elif [[ "${{ github.event.workflow_run.conclusion }}" == "success" ]]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+            echo "Setup Repository Environments workflow succeeded"
+          else
+            echo "result=false" >> $GITHUB_OUTPUT
+            echo "Setup Repository Environments workflow did not succeed"
+          fi 
+
+  # Create develop and staging branches if they don't exist
+  # Required to setup branch protections
+  create-branches:
+    runs-on: ubuntu-latest
+    needs: check-workflow-success
+    if: needs.check-workflow-success.outputs.result == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Create Develop and Staging branches
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create develop branch if it doesn't exist
+          if ! git ls-remote --heads origin develop | grep -q develop; then
+            git checkout -b develop
+            git push origin develop
+            echo "Created develop branch"
+          else
+            echo "Develop branch already exists"
+          fi
+          
+          # Create staging branch if it doesn't exist
+          git checkout main
+          if ! git ls-remote --heads origin staging | grep -q staging; then
+            git checkout -b staging
+            git push origin staging
+            echo "Created staging branch"
+          else
+            echo "Staging branch already exists"
+          fi
+
+  # Long-lived
+  # Setup varying branch protections for main, staging, and develop branches
   setup-primary-branch-protections:
     runs-on: ubuntu-latest
+    needs: create-branches
     strategy:
       matrix:
-        branch: ["main", "develop", "staging"]
+        branch: ["main", "staging", "develop"]
     steps:
       - name: Setup Branch Protection for ${{ matrix.branch }}
         run: |
-          curl -L -X PUT \
+          if [[ "${{ matrix.branch }}" == "main" ]]; then
+            ENFORCE_ADMINS=true
+            DISMISS_STALE=true
+            REVIEW_COUNT=2
+            ADMIN_REVIEW=true
+            echo "Setting up PRODUCTION-level protection for main branch"
+          elif [[ "${{ matrix.branch }}" == "staging" ]]; then
+            ENFORCE_ADMINS=true
+            DISMISS_STALE=true
+            REVIEW_COUNT=1
+            ADMIN_REVIEW=false
+            echo "Setting up STAGING-level protection for staging branch"
+          else
+            ENFORCE_ADMINS=false
+            DISMISS_STALE=false
+            REVIEW_COUNT=1
+            ADMIN_REVIEW=false
+            echo "Setting up DEVELOPMENT-level protection for develop branch"
+          fi
+
+          echo "Applying protection to ${{ matrix.branch }} with ${REVIEW_COUNT} required reviews..."
+          curl -L \
+            -X PUT \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/${{ github.repository }}/branches/${{ matrix.branch }}/protection \
-            -d '{
-              "required_status_checks": {
-                "strict": true,
-                "contexts": ["terraform-plan", "terraform-apply"]
+            -d "{
+              \"required_status_checks\": {
+                \"strict\": true,
+                \"contexts\": [\"terraform-plan\", \"terraform-apply\"]
               },
-              "enforce_admins": true,
-              "required_pull_request_reviews": {
-                "dismiss_stale_reviews": true,
-                "require_code_owner_reviews": false,
-                "required_approving_review_count": 1,
-                "require_last_push_approval": false
+              \"enforce_admins\": ${ENFORCE_ADMINS},
+              \"required_pull_request_reviews\": {
+                \"dismiss_stale_reviews\": ${DISMISS_STALE},
+                \"require_code_owner_reviews\": ${ADMIN_REVIEW},
+                \"required_approving_review_count\": ${REVIEW_COUNT},
+                \"require_last_push_approval\": false
               },
-              "restrictions": null,
-              "required_linear_history": false,
-              "allow_force_pushes": false,
-              "allow_deletions": false,
-              "block_creations": false,
-              "required_conversation_resolution": true,
-              "lock_branch": false,
-              "allow_fork_syncing": true
-            }'
+              \"restrictions\": null,
+              \"required_linear_history\": false,
+              \"allow_force_pushes\": false,
+              \"allow_deletions\": false,
+              \"block_creations\": false,
+              \"required_conversation_resolution\": true,
+              \"lock_branch\": false,
+              \"allow_fork_syncing\": true
+            }"
 
-  setup-secondary-branch-protections:
+  # Short-Lived
+  # Rulesets apply rules to branches that may not exist yet
+  setup-secondary-branch-rulesets:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        branch: ["feature/*", "bugfix/*", "hotfix/*"]
+    needs: create-branches
     steps:
-      - name: Setup Branch Protection for Feature and Fix branches
+      - name: Setup Branch Rulesets for Feature and Fix branches (that may not exist yet)
         run: |
-          curl -L -X PUT \
+          curl -L \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          https://api.github.com/repos/${{ github.repository }}/rulesets \
+          -d '{
+            "name": "Short-lived Branch Ruleset",
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {
+              "ref_name": {
+                "exclude": [],
+                "include": [
+                  "refs/heads/feature/*",
+                  "refs/heads/bugfix/*",
+                  "refs/heads/hotfix/*",
+                  "refs/heads/release/*",
+                  "refs/heads/workflow*"
+                ]
+              }
+            },
+            "rules": [
+              {
+                "type": "deletion"
+              },
+              {
+                "type": "non_fast_forward"
+              },
+              {
+                "type": "pull_request",
+                "parameters": {
+                  "required_approving_review_count": 1,
+                  "dismiss_stale_reviews_on_push": true,
+                  "require_code_owner_review": false,
+                  "require_last_push_approval": false,
+                  "required_review_thread_resolution": true,
+                  "automatic_copilot_code_review_enabled": false,
+                  "allowed_merge_methods": [
+                    "merge",
+                    "squash",
+                    "rebase"
+                  ]
+                }
+              }
+            ],
+            "bypass_actors": [
+              {
+                "actor_id": 5,
+                "actor_type": "RepositoryRole",
+                "bypass_mode": "always"
+              }
+            ]
+          }'
+
+   # Add this job to ensure environments exist before setting policies
+  verify-environments:
+    runs-on: ubuntu-latest
+    needs: check-workflow-success
+    if: needs.check-workflow-success.outputs.result == 'true'
+    steps:
+      - name: Verify environments exist
+        run: |
+          echo "Verifying that required environments exist..."
+          for env in development staging production; do
+            echo "Checking ${env} environment..."
+            curl -f -L \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/${{ github.repository }}/environments/${env} \
+              || (echo "❌ ${env} environment not found" && exit 1)
+          done
+          echo "✅ All environments verified"
+
+  # Setup branch protections for development, staging, and production environments
+  # These environments are created in the Setup Repository Environments workflow
+  development-environment-branch-policies:
+    runs-on: ubuntu-latest
+    needs: [create-branches, verify-environments]
+    steps:
+      - name: Setup Development Environment Policies
+        run: |
+          echo "Setting up development environment to allow all branches..."
+          # Use Wildcard to allow all branch types to deploy to development
+          curl -L \
+            -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/${{ github.repository }}/branches/${{ matrix.branch }}/protection \
-           -d '{
-              "enforce_admins": true,
-              "required_pull_request_reviews": {
-                "dismiss_stale_reviews": true,
-                "require_code_owner_reviews": false,
-                "required_approving_review_count": 1,
-                "require_last_push_approval": false
-              },
-              "restrictions": null,
-              "required_linear_history": false,
-              "allow_force_pushes": false,
-              "allow_deletions": false,
-              "block_creations": false,
-              "required_conversation_resolution": true,
-              "lock_branch": false,
-              "allow_fork_syncing": true
-            }'
+            https://api.github.com/repos/${{ github.repository }}/environments/development/deployment-branch-policies \
+            -d '{"name":"*"}'
 
+  staging-environment-branch-policies:
+    runs-on: ubuntu-latest
+    needs: [create-branches, verify-environments]
+    steps:
+      - name: Setup Staging Environment Policies
+        run: |
+          # Only staging and hotfix branches can deploy to staging
+          for branch_pattern in "staging" "hotfix/*"; do
+            echo "Creating deployment policy for ${branch_pattern}..."
+            curl -L \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/${{ github.repository }}/environments/staging/deployment-branch-policies \
+              -d "{\"name\":\"${branch_pattern}\"}"
+          done
+
+  production-environment-branch-policies:
+    runs-on: ubuntu-latest
+    needs: [create-branches, verify-environments]
+    steps:
+      - name: Setup Production Environment Policies
+        run: |
+          # Only main and hotfix branches can deploy to production
+          for branch_pattern in "main" "hotfix/*"; do
+            echo "Creating deployment policy for ${branch_pattern}..."
+            curl -L \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.PAT_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/${{ github.repository }}/environments/production/deployment-branch-policies \
+              -d "{\"name\":\"${branch_pattern}\"}"
+          done
